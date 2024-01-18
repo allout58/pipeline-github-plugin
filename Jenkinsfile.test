@@ -1,8 +1,8 @@
 pipeline {
     agent any
-    triggers {
-        githubEventTrigger("label", ["action": "created"], "Label Created")
-    }
+//    triggers {
+//        githubEventTrigger("label", ["action": "created"], "Label Created")
+//    }
     stages {
         stage("Test") {
             steps {
