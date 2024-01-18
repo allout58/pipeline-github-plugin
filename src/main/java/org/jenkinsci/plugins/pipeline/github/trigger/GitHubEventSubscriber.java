@@ -1,5 +1,8 @@
 package org.jenkinsci.plugins.pipeline.github.trigger;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import hudson.Extension;
 import hudson.model.CauseAction;
@@ -14,22 +17,14 @@ import org.jenkinsci.plugins.github.extension.GHSubscriberEvent;
 import org.jenkinsci.plugins.github_branch_source.GitHubSCMSource;
 import org.jenkinsci.plugins.pipeline.github.GitHubHelper;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
-import org.kohsuke.github.GHEvent;
-import org.kohsuke.github.GHEventPayload;
-import org.kohsuke.github.GHIssueComment;
-import org.kohsuke.github.GHPullRequestReview;
-import org.kohsuke.github.GitHub;
+import org.kohsuke.github.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
 import java.io.StringReader;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -70,6 +65,8 @@ public class GitHubEventSubscriber extends GHEventsSubscriber {
     @Override
     protected void onEvent(final GHSubscriberEvent event) {
         LOG.debug("Received event: {}", event.getGHEvent());
+
+        handleGenericEvent(event);
 
         switch (event.getGHEvent()) {
             case ISSUE_COMMENT:
@@ -376,14 +373,81 @@ public class GitHubEventSubscriber extends GHEventsSubscriber {
         return false;
     }
 
+    @SuppressWarnings("unchecked")
+    private void handleGenericEvent(final GHSubscriberEvent event) {
+        final Map<String, Object> payload;
+        final Map<String, String> repository;
+        try {
+            final ObjectMapper mapper = new ObjectMapper();
+            payload = mapper.readValue(event.getPayload(), new TypeReference<HashMap<String, Object>>() {
+            });
+            repository = (Map<String, String>) payload.get("repository");
+        }
+        catch (final IOException e) {
+            LOG.error("Unable to parse the payload of GHSubscriberEvent: {}", event, e);
+            return;
+        }
+        // create the key for this event
+        final String key = String.format("%s/%s",
+                repository.get("name"),
+                event.getGHEvent().name()
+        ).toLowerCase(Locale.ENGLISH);
+
+        final GitHubEventTrigger.DescriptorImpl triggerDescriptor = (GitHubEventTrigger.DescriptorImpl) Jenkins.get().getDescriptor(GitHubEventTrigger.class);
+
+        if (triggerDescriptor == null) {
+            LOG.error("Unable to find GitHubEvent Trigger, this shouldn't happen");
+            return;
+        }
+
+
+        // lookup jobs
+        for (final WorkflowJob job : triggerDescriptor.getJobs(key)) {
+            // find triggers
+            final List<GitHubEventTrigger> matchingTriggers = job.getTriggersJobProperty()
+                    .getTriggers()
+                    .stream()
+                    .filter(GitHubEventTrigger.class::isInstance)
+                    .map(GitHubEventTrigger.class::cast)
+                    .filter(t -> genericEventMatches(t, payload, job))
+                    .collect(Collectors.toList());
+
+            // TODO: do we really want to trigger a build for every matching trigger?
+            for (final GitHubEventTrigger matchingTrigger : matchingTriggers) {
+                ArrayList<ParameterValue> values = new ArrayList<>();
+                values.add(new StringParameterValue("GITHUB_EVENT_NAME", event.getGHEvent().name()));
+                values.add(new StringParameterValue("GITHUB_EVENT_TRIGGER_NAME", matchingTrigger.getTriggerName()));
+
+                job.scheduleBuild2(Jenkins.get().getQuietPeriod(),
+                        new CauseAction(new GitHubEventCause(
+                                event.getGHEvent().name(),
+                                payload,
+                                matchingTrigger.getTriggerName()
+                        )),
+                        new GitHubEnvironmentVariablesAction(values)
+                );
+                LOG.info("Job {} triggered by event {} TriggerName: {}", job.getFullName(), event.getGHEvent().name(), matchingTrigger.getTriggerName());
+            }
+        }
+    }
+
+    private boolean genericEventMatches(final GitHubEventTrigger trigger, final Map<String, Object> eventPayload, final WorkflowJob job) {
+        if (trigger.matchesPayload(eventPayload)) {
+            try {
+                LOG.debug("Job: {}, TriggerName: {} matched payload: {}",
+                        job.getFullName(), trigger.getTriggerName(), new ObjectMapper().writerWithDefaultPrettyPrinter().writeValueAsString(eventPayload));
+            }
+            catch (JsonProcessingException e) {
+                LOG.debug("Job: {}, TriggerName: {} matched payload", job.getFullName(), trigger.getTriggerName());
+            }
+            return true;
+        }
+        return false;
+    }
+
     @Override
     protected Set<GHEvent> events() {
-        final Set<GHEvent> events = new HashSet<>();
-//        events.add(GHEvent.PULL_REQUEST_REVIEW_COMMENT);
-//        events.add(GHEvent.COMMIT_COMMENT);
-        events.add(GHEvent.ISSUE_COMMENT);
-        events.add(GHEvent.PULL_REQUEST);
-        events.add(GHEvent.PULL_REQUEST_REVIEW);
-        return Collections.unmodifiableSet(events);
+        // Listen to all events so the generic GitHubEventTrigger can us any event
+        return Set.of(GHEvent.ALL);
     }
 }
