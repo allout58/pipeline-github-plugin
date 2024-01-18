@@ -1,7 +1,7 @@
 pipeline {
     agent any
     triggers {
-        githubEventTrigger("label", ["action": "created"], "Label Created")
+        githubEventTrigger(eventName: "label", eventPayloadFilter: ["action": "created"], triggerName: "Label Created")
     }
     stages {
         stage("Test") {
