@@ -40,8 +40,8 @@ public class GitHubEventCause extends Cause {
     @Override
     public String getShortDescription() {
         if(triggerName != null) {
-            return String.format("[%s] received event: %s", triggerName, eventName);
+            return String.format("[%s] Received matching event: %s", triggerName, eventName);
         }
-        return "received event: " + eventName;
+        return "Received matching event: " + eventName;
     }
 }

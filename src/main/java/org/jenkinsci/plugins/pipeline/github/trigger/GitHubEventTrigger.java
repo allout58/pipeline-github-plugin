@@ -99,8 +99,48 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
                 event.name().toLowerCase(Locale.ENGLISH)).toLowerCase();
     }
 
+    @SuppressWarnings("unchecked")
     boolean matchesPayload(Map<String, Object> payload) {
-        return true;
+        if (eventPayloadFilter == null || eventPayloadFilter.isEmpty()) {
+            return true;
+        }
+        for (String needle : eventPayloadFilter.keySet()) {
+            if(needle.isBlank()) {
+                LOG.warn("Empty needle, will match no events");
+                return false;
+            }
+            String filter = eventPayloadFilter.get(needle);
+            List<String> keys = Arrays.stream(needle.split("\\.")).collect(Collectors.toList());
+            Map<String, Object> currentMap = payload;
+            int depth = 0;
+            while (!keys.isEmpty()) {
+                String currentKey = keys.remove(0);
+                if (currentKey.isBlank()) {
+                    return false;
+                }
+                if (!currentMap.containsKey(currentKey)) {
+                    LOG.debug("Could not find key {} of needle {} at depth {}", currentKey, needle, depth);
+                    return false;
+                }
+                Object val = currentMap.get(currentKey);
+                if (val instanceof Map) {
+                    currentMap = (Map<String, Object>) val;
+                }
+                else if (!keys.isEmpty()) {
+                    LOG.warn("Could not find needle {} at depth {}, not a Map", needle, depth + 1);
+                    return false;
+                }
+                else {
+                    // Okay, we are finally at the thing we want to compare
+                    // Match nulls or the string version of the value
+                    return (val == null && filter == null) ||
+                            (val != null && val.toString().equals(filter));
+                }
+
+                depth++;
+            }
+        }
+        return false;
     }
 
     @Symbol("githubEventTrigger")

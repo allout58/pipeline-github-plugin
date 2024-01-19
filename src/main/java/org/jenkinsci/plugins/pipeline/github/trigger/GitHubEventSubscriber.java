@@ -31,8 +31,6 @@ import java.util.stream.Stream;
 /**
  * Listens for GitHub events.
  *
- * Currently only handles IssueComment events.
- *
  * @author Aaron Whiteside
  */
 @Extension
@@ -390,7 +388,7 @@ public class GitHubEventSubscriber extends GHEventsSubscriber {
         }
         // create the key for this event
         final String key = String.format("%s/%s",
-                repository.get("name"),
+                repository.get("full_name"),
                 event.getGHEvent().name()
         ).toLowerCase(Locale.ENGLISH);
 
@@ -399,6 +397,12 @@ public class GitHubEventSubscriber extends GHEventsSubscriber {
         if (triggerDescriptor == null) {
             LOG.error("Unable to find GitHubEvent Trigger, this shouldn't happen");
             return;
+        }
+
+        Set<WorkflowJob> jobs = triggerDescriptor.getJobs(key);
+
+        if(jobs.isEmpty()) {
+            LOG.warn("Unable to find any jobs with key {}", key);
         }
 
 
@@ -427,7 +431,7 @@ public class GitHubEventSubscriber extends GHEventsSubscriber {
                         )),
                         new GitHubEnvironmentVariablesAction(values)
                 );
-                LOG.info("Job {} triggered by event {} TriggerName: {}", job.getFullName(), event.getGHEvent().name(), matchingTrigger.getTriggerName());
+                LOG.info("Job {} triggered by event {} TriggerName: {}", job.getFullName(), event.getGHEvent().name().toLowerCase(Locale.ENGLISH), matchingTrigger.getTriggerName());
             }
         }
     }
