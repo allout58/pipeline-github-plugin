@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Listens for GitHub events.
@@ -447,7 +448,17 @@ public class GitHubEventSubscriber extends GHEventsSubscriber {
 
     @Override
     protected Set<GHEvent> events() {
-        // Listen to all events so the generic GitHubEventTrigger can us any event
-        return Set.of(GHEvent.ALL);
+        // Events we will always want to watch
+        final Set<GHEvent> alwaysEvents = new HashSet<>();
+//        events.add(GHEvent.PULL_REQUEST_REVIEW_COMMENT);
+//        events.add(GHEvent.COMMIT_COMMENT);
+        alwaysEvents.add(GHEvent.ISSUE_COMMENT);
+        alwaysEvents.add(GHEvent.PULL_REQUEST);
+        alwaysEvents.add(GHEvent.PULL_REQUEST_REVIEW);
+
+        return Stream.concat(
+                alwaysEvents.stream(),
+                GitHubEventTrigger.DescriptorImpl.getWatchedEvents().stream()
+        ).collect(Collectors.toUnmodifiableSet());
     }
 }

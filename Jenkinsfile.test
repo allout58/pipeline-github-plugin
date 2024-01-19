@@ -6,8 +6,8 @@ pipeline {
     stages {
         stage("Test") {
             steps {
-                echo "Event:" + env.GITHUB_EVENT_NAME
-                echo "Trigger" + env.GITHUB_EVENT_TRIGGER_NAME
+                echo "Event: " + env.GITHUB_EVENT_NAME
+                echo "Trigger: " + env.GITHUB_EVENT_TRIGGER_NAME
             }
         }
     }

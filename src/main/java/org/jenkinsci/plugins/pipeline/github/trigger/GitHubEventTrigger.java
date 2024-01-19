@@ -5,20 +5,21 @@ import hudson.Extension;
 import hudson.model.Item;
 import hudson.triggers.Trigger;
 import hudson.triggers.TriggerDescriptor;
+import jenkins.scm.api.SCMHead;
 import jenkins.scm.api.SCMSource;
 import org.jenkinsci.Symbol;
 import org.jenkinsci.plugins.github_branch_source.GitHubSCMSource;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
+import org.kohsuke.github.GHEvent;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nonnull;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * A generic trigger for any specified GitHub event, to be used from pipeline scripts only.
@@ -30,8 +31,13 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class GitHubEventTrigger extends Trigger<WorkflowJob> {
     private static final Logger LOG = LoggerFactory.getLogger(GitHubEventTrigger.class);
+    private static final Map<String, GHEvent> GH_EVENT_MAP;
 
-    private final String eventName;
+    static {
+        GH_EVENT_MAP = Arrays.stream(GHEvent.values()).collect(Collectors.toUnmodifiableMap(ev -> ev.name().toLowerCase(Locale.ENGLISH), Function.identity()));
+    }
+
+    private final GHEvent event;
     private final Map<String, String> eventPayloadFilter;
     private final String triggerName;
 
@@ -43,13 +49,17 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
      */
     @DataBoundConstructor
     public GitHubEventTrigger(@Nonnull final String eventName, final Map<String, String> eventPayloadFilter, final String triggerName) {
-        this.eventName = eventName;
+        final String lowerEventName = eventName.toLowerCase(Locale.ENGLISH);
+        this.event = GH_EVENT_MAP.get(lowerEventName);
+        if (this.event == null) {
+            LOG.warn("Unknown GitHub event type: {}. Known event types are [{}]", lowerEventName, String.join(", ", GH_EVENT_MAP.keySet()));
+        }
         this.eventPayloadFilter = eventPayloadFilter;
         this.triggerName = triggerName;
     }
 
-    public String getEventName() {
-        return eventName;
+    public GHEvent getEventName() {
+        return event;
     }
 
     public Map<String, String> getEventPayloadFilter() {
@@ -63,14 +73,20 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
     @Override
     public void start(final WorkflowJob project, boolean newInstance) {
         super.start(project, newInstance);
-        DescriptorImpl.jobs.computeIfAbsent(getKey(project), x -> new HashSet<>())
-                .add(project);
+        if (SCMHead.HeadByItem.findHead(job) != null) {
+            DescriptorImpl.jobs.computeIfAbsent(getKey(project), x -> new HashSet<>())
+                    .add(project);
+            DescriptorImpl.watchEvent(event);
+        }
     }
 
     @Override
     public void stop() {
-        DescriptorImpl.jobs.getOrDefault(getKey(job), Collections.emptySet())
-                .remove(job);
+        if (SCMHead.HeadByItem.findHead(job) != null) {
+            DescriptorImpl.jobs.getOrDefault(getKey(job), Collections.emptySet())
+                    .remove(job);
+            DescriptorImpl.unwatchEvent(event);
+        }
     }
 
     @SuppressFBWarnings("NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE")
@@ -80,7 +96,7 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
         return String.format("%s/%s/%s",
                 scmSource.getRepoOwner(),
                 scmSource.getRepository(),
-                eventName).toLowerCase();
+                event.name().toLowerCase(Locale.ENGLISH)).toLowerCase();
     }
 
     boolean matchesPayload(Map<String, Object> payload) {
@@ -90,11 +106,38 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
     @Symbol("githubEventTrigger")
     @Extension
     public static class DescriptorImpl extends TriggerDescriptor {
-        private transient static final Map<String, Set<WorkflowJob>> jobs = new ConcurrentHashMap<>();
+        private static final Map<String, Set<WorkflowJob>> jobs = new ConcurrentHashMap<>();
+        private static final ConcurrentHashMap<GHEvent, Integer> eventCount = new ConcurrentHashMap<>();
 
         @Override
         public boolean isApplicable(final Item item) {
             return false; // this is not configurable from the ui.
+        }
+
+        public static void watchEvent(GHEvent event) {
+            eventCount.merge(event, 1, Integer::sum);
+        }
+
+        public static void unwatchEvent(GHEvent event) {
+            synchronized (eventCount) {
+                var current = eventCount.get(event);
+                if (current != null) {
+                    current--;
+                    if (current > 0) {
+                        eventCount.put(event, current);
+                    }
+                    else {
+                        eventCount.remove(event);
+                    }
+                }
+                else {
+                    LOG.warn("Tried to unwatch event {} that was not already watched", event.name());
+                }
+            }
+        }
+
+        public static Set<GHEvent> getWatchedEvents() {
+            return eventCount.keySet();
         }
 
         public Set<WorkflowJob> getJobs(final String key) {
