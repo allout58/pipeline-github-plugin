@@ -52,6 +52,7 @@ This plugin adds the following pipeline triggers
 
 * issueCommentTrigger
 * pullRequestReview
+* githubEventTrigger
 
 ## issueCommentTrigger
 
@@ -176,6 +177,65 @@ The GitHub review comment and author that triggered the build are exposed as env
 * `GITHUB_REVIEW_COMMENT`
 * `GITHUB_REVIEW_AUTHOR`
 * `GITHUB_REVIEW_STATE`
+
+## githubEventTrigger
+A generic trigger that will listen to any [GitHub Webhook Event](https://docs.github.com/en/webhooks/webhook-events-and-payloads) and optionally filter based on the payload of the webhook.
+
+### Parameters
+
+- `eventName` - The name of the event to watch for to trigger a build
+- `eventPayloadFilter` (__Optional__) - A Java Map of filters that must all match to
+- `triggerName` (__Optiona__) - A name for this particular trigger, especially useful when using multiple `githubEventTrigger`s
+
+### Usage
+
+#### Scripted Pipeline:
+```groovy
+properties([
+    pipelineTriggers([
+      githubEventTrigger(eventName: "pull_request", eventPayloadFilter: ["action": "closed"], triggerName: "PR Closed"),
+      githubEventTrigger(eventName: "label", triggerName: "Label Change"),
+      // All label events
+      githubEventTrigger(eventName: "label")
+    ])
+])
+```
+
+#### Declarative Pipeline:
+```groovy
+pipeline {
+    triggers {
+        githubEventTrigger(eventName: "pull_request", eventPayloadFilter: ["action": "closed"], triggerName: "PR Closed")
+        githubEventTrigger(eventName: "label", triggerName: "Label Change")
+        // All label events
+        githubEventTrigger(eventName: "label")
+    }
+}
+```
+
+#### Detecting whether a build was started by the trigger in a script:
+
+Note that the following uses `currentBuild.rawBuild` and should therefore only
+be done in a `@NonCPS` context. See [the workflow-cps-plugin Technical Design
+](https://github.com/jenkinsci/workflow-cps-plugin/blob/master/README.md#technical-design)
+for more information.
+
+```groovy
+def triggerCause = currentBuild.rawBuild.getCause(org.jenkinsci.plugins.pipeline.github.trigger.GitHubEventCause)
+
+if (triggerCause) {
+    echo("Build was started by GitHub Event ${triggerCause.eventName} for the ${triggerCause.triggerName} trigger" )
+} else {
+    echo('Build was not started by a trigger')
+}
+```
+
+#### Environment variables
+
+The GitHub event name and trigger name that triggered the build are exposed as environment variables.
+
+* `GITHUB_EVENT_NAME`
+* `GITHUB_EVENT_TRIGGER_NAME`
 
 
 # Global Variables
