@@ -104,6 +104,7 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
         if (eventPayloadFilter == null || eventPayloadFilter.isEmpty()) {
             return true;
         }
+        boolean found = true;
         for (String needle : eventPayloadFilter.keySet()) {
             if(needle.isBlank()) {
                 LOG.warn("Empty needle, will match no events");
@@ -133,14 +134,16 @@ public class GitHubEventTrigger extends Trigger<WorkflowJob> {
                 else {
                     // Okay, we are finally at the thing we want to compare
                     // Match nulls or the string version of the value
-                    return (val == null && filter == null) ||
-                            (val != null && val.toString().equals(filter));
+                    found = found && (
+                            (val == null && filter == null) ||
+                                    (val != null && val.toString().equals(filter))
+                    );
                 }
 
                 depth++;
             }
         }
-        return false;
+        return found;
     }
 
     @Symbol("githubEventTrigger")
